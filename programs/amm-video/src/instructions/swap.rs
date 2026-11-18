@@ -39,6 +39,23 @@ pub struct Swap<'info> {
     pub vault_y: Box<Account<'info, TokenAccount>>,
     #[account(
         mut,
+        seeds = [b"treasury_x", config.key().as_ref()],
+        bump,
+        token::mint = mint_x,
+        token::authority = config, 
+    )]
+    pub treasury_x: Box<Account<'info, TokenAccount>>,
+    #[account(
+        mut,
+        seeds = [b"treasury_y", config.key().as_ref()],
+        bump,
+        token::mint = mint_y,
+        token::authority = config, 
+    )]
+    pub treasury_y: Box<Account<'info, TokenAccount>>,
+
+    #[account(
+        mut,
         associated_token::mint = mint_x,
         associated_token::authority = user,
     )]
@@ -57,11 +74,15 @@ pub struct Swap<'info> {
 impl<'info> Swap<'info> {
     pub fn swap(&mut self, is_x: bool, amount: u64, min: u64) -> Result<()> {
         require!(amount > 0, AmmError::InvalidAmount);
+        require!(self.config.fee < 10_000, AmmError::InvalidFee);
+
+        let fee= (u128::from(amount) * u128::from(self.config.fee) / 10_000u128) as u64;
+        let net_input = amount - fee;
         let mut curve = ConstantProduct::init(
             self.vault_x.amount,
             self.vault_y.amount,
             self.mint_lp.supply,
-            self.config.fee,
+            0,
             Some(6),
         )
         .unwrap();
@@ -72,23 +93,27 @@ impl<'info> Swap<'info> {
         };
 
         let swap_result: constant_product_curve::SwapResult = curve
-            .swap(p, amount, min)
+            .swap(p, net_input, min)
             .map_err(|_| AmmError::SlippageExceeded)?;
 
-        self.deposit_tokens(is_x, swap_result.deposit)?;
+        self.deposit_tokens(is_x, net_input, false)?;
+        if fee > 0 {
+            self.deposit_tokens(is_x, fee, true)?;
+        }
         self.withdraw_tokens(is_x, swap_result.withdraw)
     }
 
-    pub fn deposit_tokens(&mut self, is_x: bool, amount: u64) -> Result<()> {
-        let (from, to) = match is_x {
-            true => (
-                self.user_x.to_account_info(),
-                self.vault_x.to_account_info(),
-            ),
-            false => (
-                self.user_y.to_account_info(),
-                self.vault_y.to_account_info(),
-            ),
+    pub fn deposit_tokens(&mut self, is_x: bool, amount: u64, to_treasury: bool) -> Result<()> {
+        let from = match is_x {
+           true => self.user_x.to_account_info(),
+           false => self.user_y.to_account_info(),
+        };
+
+        let to = match (is_x, to_treasury) {
+            (true, true) => self.treasury_x.to_account_info(),
+            (true, false) => self.vault_x.to_account_info(),
+            (false, true) => self.treasury_y.to_account_info(),
+            (false, false) => self.vault_y.to_account_info(),
         };
 
         transfer(

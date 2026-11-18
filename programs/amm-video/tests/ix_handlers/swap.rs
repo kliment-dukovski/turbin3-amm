@@ -20,15 +20,24 @@ pub fn create_swap_ix(
     config: Pubkey,
     vault_x: Pubkey,
     vault_y: Pubkey,
+    is_x: bool,
 ) -> Instruction {
     let user = payer.pubkey();
     let user_x = associated_token::get_associated_token_address(&user, &mint_x);
     let user_y = associated_token::get_associated_token_address(&user, &mint_y);
 
+    let (treasury_x, _) = Pubkey::find_program_address(
+        &[b"treasury_x", config.as_ref()],
+        &amm_video::id(),
+    );
+    let (treasury_y, _) = Pubkey::find_program_address(
+        &[b"treasury_y", config.as_ref()],
+        &amm_video::id(),
+    );
     Instruction::new_with_bytes(
         amm_video::id(),
         &amm_video::instruction::Swap {
-            is_x: true,
+            is_x,
             amount_in: 10_000_000,
             min_amount_out: 5_000_000,
         }
@@ -43,6 +52,8 @@ pub fn create_swap_ix(
             vault_y,
             user_x,
             user_y,
+            treasury_x,
+            treasury_y,
             token_program: TOKEN_PROGRAM_ID,
             associated_token_program: ASSOCIATED_TOKEN_PROGRAM_ID,
             system_program: SYSTEM_PROGRAM_ID,
